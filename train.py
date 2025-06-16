@@ -237,8 +237,8 @@ if __name__ == '__main__':
                 predictions = model(img)
                 loss, loss_dict = criterion(predictions, targets)
                 total_loss += loss.item()
-                total_density_loss += loss_dict['density_loss']
-                total_bbox_loss += loss_dict['bbox_loss']
+                total_density_loss += loss_dict['density_loss'].item()
+                total_bbox_loss += loss_dict['bbox_loss'].item()
                 pred_heatmap = torch.sigmoid(predictions[0])
                 h_max = F.max_pool2d(pred_heatmap, 3, stride=1, padding=1)
                 peaks = (h_max == pred_heatmap) & (pred_heatmap > 0.4)
