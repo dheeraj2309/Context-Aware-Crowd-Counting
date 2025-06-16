@@ -21,8 +21,8 @@ class VehicleDetector(nn.Module):
 
         # Final 1x1 conv layers for each specific task
         # They take the 128-channel output from our new base block.
-        self.bbox_head = nn.Conv2d(128, 4, kernel_size=1)   # 4 channels for box regression (e.g., l,t,r,b)
-        self.offset_head = nn.Conv2d(128, 2, kernel_size=1) # 2 channels for center offset
+        self.bbox_head = nn.Conv2d(129, 4, kernel_size=1)   # 4 channels for box regression (e.g., l,t,r,b)
+        self.offset_head = nn.Conv2d(129, 2, kernel_size=1) # 2 channels for center offset
 
     def forward(self, x):
         # 1. Pass the input through the shared VGG backbone (the frontend of CANNet)
@@ -37,9 +37,11 @@ class VehicleDetector(nn.Module):
         # --- Branch 2: The New Heads Path for BBox/Offset ---
         # Pass the SAME shared features through our new head modules
         new_head_features = self.new_heads_base(shared_features)
-        bbox_map = self.bbox_head(new_head_features)
-        offset_map = self.offset_head(new_head_features)
+        combined_features = torch.cat([new_head_features, density_map], dim=1) # Shape: (B, 129, H, W)
         
+        # Pass the combined features to the final heads
+        bbox_map = self.bbox_head(combined_features)
+        offset_map = self.offset_head(combined_features)
         # The density map should be a probability, so apply a sigmoid.
         # The original CANNet doesn't do this, it outputs raw density values.
         # We'll keep it as raw density to match the original training.

@@ -6,53 +6,42 @@ import h5py
 import cv2
 import torch # We'll use torch for some ops
 
-def gaussian_radius(det_size, min_overlap=0.7):
-    """Calculate the radius of the 2D Gaussian heatmap.
-    This is a standard formula used in center-point based detectors.
-    """
-    height, width = det_size
-    a1  = 1
-    b1  = (height + width)
-    c1  = width * height * (1 - min_overlap) / (1 + min_overlap)
-    sq1 = np.sqrt(b1 ** 2 - 4 * a1 * c1)
-    r1  = (b1 - sq1) / (2 * a1)
-
-    a2  = 4
-    b2  = 2 * (height + width)
-    c2  = (1 - min_overlap) * width * height
-    sq2 = np.sqrt(b2 ** 2 - 4 * a2 * c2)
-    r2  = (b2 - sq2) / (2 * a2)
-
-    a3  = 4 * min_overlap
-    b3  = -2 * min_overlap * (height + width)
-    c3  = (min_overlap - 1) * width * height
-    sq3 = np.sqrt(b3 ** 2 - 4 * a3 * c3)
-    r3  = (b3 + sq3) / (2 * a3)
-    return min(r1, r2, r3)
-
-def draw_umich_gaussian(heatmap, center, radius, k=1):
-    """Draw a 2D Gaussian blob on a heatmap."""
-    diameter = 2 * radius + 1
-    gaussian = gaussian2D((diameter, diameter), sigma=diameter / 6)
-    
+def draw_fixed_gaussian(heatmap, center, sigma):
+    """Draws a 2D Gaussian blob with a fixed sigma."""
+    # Get the integer center coordinates
     x, y = int(center[0]), int(center[1])
-    height, width = heatmap.shape[0:2]
     
-    left, right = min(x, radius), min(width - x, radius + 1)
-    top, bottom = min(y, radius), min(height - y, radius + 1)
+    h, w = heatmap.shape
     
-    masked_heatmap  = heatmap[y - top:y + bottom, x - left:x + right]
-    masked_gaussian = gaussian[radius - top:radius + bottom, radius - left:radius + right]
-    if min(masked_gaussian.shape) > 0 and min(masked_heatmap.shape) > 0:
-        np.maximum(masked_heatmap, masked_gaussian * k, out=masked_heatmap)
-    return heatmap
+    # Create a grid of coordinates
+    ul = [int(x - 3 * sigma), int(y - 3 * sigma)]
+    br = [int(x + 3 * sigma + 1), int(y + 3 * sigma + 1)]
+    
+    # Ensure the grid is within the heatmap bounds
+    if ul[0] >= w or ul[1] >= h or br[0] < 0 or br[1] < 0:
+        return heatmap
+        
+    size = 2 * int(3 * sigma) + 1
+    x_grid = np.arange(0, size, 1, float)
+    y_grid = x_grid[:, np.newaxis]
+    
+    x0 = y0 = size // 2
+    # The gaussian blob, not normalized
+    g = np.exp(- ((x_grid - x0) ** 2 + (y_grid - y0) ** 2) / (2 * sigma ** 2))
 
-def gaussian2D(shape, sigma=1):
-    m, n = [(ss - 1.) / 2. for ss in shape]
-    y, x = np.ogrid[-m:m+1,-n:n+1]
-    h = np.exp(-(x * x + y * y) / (2 * sigma * sigma))
-    h[h < np.finfo(h.dtype).eps * h.max()] = 0
-    return h
+    # Define the paste location on the main heatmap
+    g_x = max(0, -ul[0]), min(br[0], w) - ul[0]
+    g_y = max(0, -ul[1]), min(br[1], h) - ul[1]
+    
+    img_x = max(0, ul[0]), min(br[0], w)
+    img_y = max(0, ul[1]), min(br[1], h)
+    
+    # Paste the gaussian blob, taking the maximum value if there's an overlap
+    heatmap[img_y[0]:img_y[1], img_x[0]:img_x[1]] = np.maximum(
+        heatmap[img_y[0]:img_y[1], img_x[0]:img_x[1]],
+        g[g_y[0]:g_y[1], g_x[0]:g_x[1]])
+        
+    return heatmap
 
 def load_data_multi_head(img_path, annotations, train=True):
     """
@@ -107,56 +96,50 @@ def load_data_multi_head(img_path, annotations, train=True):
 
     # --- Ground Truth Generation ---
     output_stride = 8
+    
+    # --- TUNE THIS VALUE ---
+    # This is the fixed sigma for the Gaussian, applied AT THE OUTPUT SCALE.
+    # If you used sigma=30 on the full-size image, the equivalent on the 1/8th scale map
+    # would be 30 / 8 = 3.75. Let's start with a value around there.
+    FIXED_SIGMA = 4.0 
+    # -----------------------
+
     output_w = img.width // output_stride
     output_h = img.height // output_stride
 
-    # Initialize empty ground truth maps
     gt_heatmap = np.zeros((output_h, output_w), dtype=np.float32)
     gt_bbox = np.zeros((4, output_h, output_w), dtype=np.float32)
     gt_offset = np.zeros((2, output_h, output_w), dtype=np.float32)
-    # Regression mask to calculate loss only at object centers
     gt_reg_mask = np.zeros((output_h, output_w), dtype=np.uint8)
 
     for index, row in annotations.iterrows():
-        # Get original box dimensions
-        x1, y1, x2, y2 = row['xmin'], row['ymin'], row['xmax'], row['ymax']
-        box_w, box_h = x2 - x1, y2 - y1
+        box = row[['xmin', 'ymin', 'xmax', 'ymax']].values
+        box_w, box_h = box[2] - box[0], box[3] - box[1]
         
         if box_w <= 0 or box_h <= 0:
             continue
 
-        # Calculate center point and scale it to the output size
-        center_x, center_y = (x1 + x2) / 2, (y1 + y2) / 2
+        center_x, center_y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
         center_out_x = center_x / output_stride
         center_out_y = center_y / output_stride
         
-        # Integer coordinates of the center on the output map
         int_center_out_x = int(center_out_x)
         int_center_out_y = int(center_out_y)
 
-        # 1. Generate Density/Center-ness Heatmap
-        # The radius of the gaussian is adaptive to the object's size
-        radius = gaussian_radius((box_h, box_w))
-        radius = max(0, int(radius / output_stride))
-        draw_umich_gaussian(gt_heatmap, (center_out_x, center_out_y), radius)
+        # --- MODIFIED: Use the new fixed drawing function ---
+        # No more adaptive radius calculation.
+        if 0 <= int_center_out_x < output_w and 0 <= int_center_out_y < output_h:
+            draw_fixed_gaussian(gt_heatmap, (center_out_x, center_out_y), FIXED_SIGMA)
+        
+            # The rest of the GT generation is the same
+            gt_bbox[0, int_center_out_y, int_center_out_x] = box_w / img.width
+            gt_bbox[1, int_center_out_y, int_center_out_x] = box_h / img.height
+            gt_bbox[2, int_center_out_y, int_center_out_x] = center_x / img.width
+            gt_bbox[3, int_center_out_y, int_center_out_x] = center_y / img.height
 
-        # 2. Generate BBox Target Map
-        # We predict the size (w,h) of the box. Normalize by image size for stable training.
-        # This could also be (l,t,r,b) offsets. Let's start with w,h.
-        gt_bbox[0, int_center_out_y, int_center_out_x] = box_w / img.width
-        gt_bbox[1, int_center_out_y, int_center_out_x] = box_h / img.height
-        # Let's add the center as well for a DIoU loss later
-        gt_bbox[2, int_center_out_y, int_center_out_x] = center_x / img.width
-        gt_bbox[3, int_center_out_y, int_center_out_x] = center_y / img.height
+            gt_offset[0, int_center_out_y, int_center_out_x] = center_out_x - int_center_out_x
+            gt_offset[1, int_center_out_y, int_center_out_x] = center_out_y - int_center_out_y
 
-        # 3. Generate Offset Target Map
-        # The offset is the fractional part of the center coordinate
-        dx = center_out_x - int_center_out_x
-        dy = center_out_y - int_center_out_y
-        gt_offset[0, int_center_out_y, int_center_out_x] = dx
-        gt_offset[1, int_center_out_y, int_center_out_x] = dy
-
-        # 4. Set the regression mask for this object's location
-        gt_reg_mask[int_center_out_y, int_center_out_x] = 1
+            gt_reg_mask[int_center_out_y, int_center_out_x] = 1
         
     return img, gt_heatmap, gt_bbox, gt_offset, gt_reg_mask
