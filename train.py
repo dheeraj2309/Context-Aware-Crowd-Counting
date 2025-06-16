@@ -196,7 +196,7 @@ def validate(model, loader, criterion, device):
             # Use max pooling to find local maxima, just like in the visualization script
             h_max = F.max_pool2d(pred_heatmap, 3, stride=1, padding=1)
             # A peak is where the original value is a local max and above a threshold
-            peaks = (h_max == pred_heatmap) & (pred_heatmap > 0.3) # Using a confidence threshold
+            peaks = (h_max == pred_heatmap) & (pred_heatmap > 0.5) # Using a confidence threshold
             
             pred_count = peaks.sum().item() # The count is the number of peaks
             gt_count = gt_reg_mask.sum().item() # The true count
