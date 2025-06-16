@@ -60,13 +60,9 @@ def load_data_multi_head(img_path, annotations, train=True):
     'annotations' is a pandas DataFrame filtered for the current img_path.
     """
     img = Image.open(img_path).convert('RGB')
-    original_w, original_h = img.size
     
-    # --- Aggressive On-the-Fly Augmentations (if training) ---
     if train:
-        # Example: Random resize and crop (Photometric can be done in dataset class)
-        # For simplicity, we will stick to the crop/flip from your original file for now.
-        # This can be expanded later.
+        # --- Geometric Augmentations ---
         ratio = 0.5 
         crop_w = int(img.size[0] * ratio)
         crop_h = int(img.size[1] * ratio)
@@ -79,29 +75,35 @@ def load_data_multi_head(img_path, annotations, train=True):
         annotations['xmax'] = annotations['xmax'] - dx
         annotations['ymax'] = annotations['ymax'] - dy
         
+        # --- THIS IS THE CRITICAL SECTION ---
         # Filter out boxes that are no longer in the cropped image
-        annotations = annotations[
+        filtered_annotations = annotations[
             (annotations['xmax'] > 0) & (annotations['ymax'] > 0) &
             (annotations['xmin'] < crop_w) & (annotations['ymin'] < crop_h)
         ]
         
+        # FIX: Explicitly create a copy after filtering to resolve the warning.
+        annotations = filtered_annotations.copy()
+        # ------------------------------------
+
+        # Now, all subsequent modifications are safely performed on a definite copy.
         # Clamp boxes to be within the crop dimensions
-        annotations['xmin'] = np.maximum(annotations['xmin'], 0)
-        annotations['ymin'] = np.maximum(annotations['ymin'], 0)
-        annotations['xmax'] = np.minimum(annotations['xmax'], crop_w)
-        annotations['ymax'] = np.minimum(annotations['ymax'], crop_h)
+        # We can use .loc to be even more explicit, as the warning suggests.
+        annotations.loc[:, 'xmin'] = np.maximum(annotations['xmin'], 0)
+        annotations.loc[:, 'ymin'] = np.maximum(annotations['ymin'], 0)
+        annotations.loc[:, 'xmax'] = np.minimum(annotations['xmax'], crop_w)
+        annotations.loc[:, 'ymax'] = np.minimum(annotations['ymax'], crop_h)
         
-        # Perform the crop
+        # Perform the crop on the image
         img = img.crop((dx, dy, crop_w + dx, crop_h + dy))
         
         # Random horizontal flip
         if random.random() > 0.5:
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            # Flip annotations
             old_x1 = annotations['xmin'].copy()
             old_x2 = annotations['xmax'].copy()
-            annotations['xmin'] = crop_w - old_x2
-            annotations['xmax'] = crop_w - old_x1
+            annotations.loc[:, 'xmin'] = crop_w - old_x2
+            annotations.loc[:, 'xmax'] = crop_w - old_x1
 
     # --- Ground Truth Generation ---
     output_stride = 8
