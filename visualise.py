@@ -8,6 +8,8 @@ import random
 import os
 from PIL import Image
 from pathlib import Path
+import torch.nn as nn
+
 
 # Import our model definition
 from vehicle_model import VehicleDetector
