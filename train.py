@@ -99,8 +99,8 @@ def main():
         # Logging
         new_log = pd.DataFrame({
             'epoch': [epoch], 'train_loss': [train_loss], 'val_loss': [val_loss],
-            'val_density_loss': [val_losses['density_loss'].item()], 
-            'val_bbox_loss': [val_losses['bbox_loss'].item()], 'val_mae': [val_mae]
+            'val_density_loss': [val_losses['density_loss']], 
+            'val_bbox_loss': [val_losses['bbox_loss']], 'val_mae': [val_mae]
         })
         new_log.to_csv(log_file_path, mode='a', header=False, index=False)
 
