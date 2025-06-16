@@ -77,14 +77,13 @@ def main():
             print(f"=> Resuming training from checkpoint '{args.resume}'")
             checkpoint = torch.load(args.resume, map_location=device)
             
-            # --- THIS IS THE ROBUST FIX ---
-            # Check for keys before accessing them, provide defaults if they don't exist.
-            start_epoch = checkpoint.get('epoch', 0) # Default to epoch 0 if 'epoch' key is missing
-            best_val_loss = checkpoint.get('best_val_loss', float('inf')) # Default to infinity
+            # --- THIS IS THE FULLY ROBUST FIX ---
+            # Use .get() for ALL optional keys to prevent any KeyErrors.
+            start_epoch = checkpoint.get('epoch', 0)
+            best_val_loss = checkpoint.get('best_val_loss', float('inf'))
             
-            model.load_state_dict(checkpoint['state_dict']) # 'state_dict' must exist
+            model.load_state_dict(checkpoint['state_dict'])
             
-            # Also check for the optimizer state
             if 'optimizer' in checkpoint:
                 optimizer.load_state_dict(checkpoint['optimizer'])
                 print("=> Optimizer state loaded successfully.")
