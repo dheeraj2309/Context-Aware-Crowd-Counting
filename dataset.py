@@ -6,6 +6,7 @@ import pandas as pd
 from torch.utils.data import Dataset
 from PIL import Image
 from torchvision import transforms # Import the main transforms module
+import json
 
 # Import our new data loading function from image.py
 from image import load_data_multi_head 
