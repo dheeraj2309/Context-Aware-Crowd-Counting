@@ -73,30 +73,26 @@ def main():
     # --- LOGIC FOR LOADING WEIGHTS ---
     # Priority: 1. Resume from a checkpoint, 2. Load pre-trained CANNet, 3. Train from scratch
     if args.resume:
+        # To resume, you should point to 'latest_checkpoint.pth.tar'
         if os.path.isfile(args.resume):
-            print(f"=> Resuming training from checkpoint '{args.resume}'")
+            print(f"=> Resuming from checkpoint '{args.resume}'")
             checkpoint = torch.load(args.resume, map_location=device)
-            
-            # --- THIS IS THE FULLY ROBUST FIX ---
-            # Use .get() for ALL optional keys to prevent any KeyErrors.
-            start_epoch = checkpoint.get('epoch', 0)
-            best_val_loss = checkpoint.get('best_val_loss', float('inf'))
             
             model.load_state_dict(checkpoint['state_dict'])
             
+            # Safely load optimizer, epoch, and best_val_loss
             if 'optimizer' in checkpoint:
                 optimizer.load_state_dict(checkpoint['optimizer'])
-                print("=> Optimizer state loaded successfully.")
-            else:
-                print("=> WARNING: Optimizer state not found in checkpoint. Starting with a fresh optimizer.")
-
-            print(f"=> Resumed from epoch {start_epoch}. Best validation loss so far: {best_val_loss:.4f}")
-            # --- END OF FIX ---
+            start_epoch = checkpoint.get('epoch', 0)
+            best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+            
+            print(f"=> Resumed successfully from epoch {start_epoch}.")
         else:
             print(f"=> ERROR: No checkpoint found at '{args.resume}'")
             return
     elif args.pretrained_cannet:
-        # This part runs only when starting a fresh training run with transfer learning
+        # This runs ONLY if not resuming and a pre-trained model is provided
+        print("=> Starting new training run with pre-trained CANNet weights.")
         model.load_pretrained_cannet(args.pretrained_cannet, device)
 
     # --- Layer Freezing Logic ---
@@ -139,14 +135,14 @@ def main():
         else:
             epochs_no_improve += 1
         
-        # Always save the latest checkpoint
-        save_checkpoint({
+        state = {
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
             'best_val_loss': best_val_loss,
             'optimizer': optimizer.state_dict(),
-        }, is_best, filename=os.path.join(args.save_path, 'checkpoint.pth.tar'))
-
+        }
+        # Always save the latest checkpoint
+        save_checkpoint(state, is_best, args.save_path)
         if epochs_no_improve >= args.early_stop_patience:
             print(f"Early stopping triggered after {args.early_stop_patience} epochs with no improvement.")
             break
