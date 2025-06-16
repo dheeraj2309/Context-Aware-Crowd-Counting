@@ -144,6 +144,10 @@ def validate(model, loader, criterion, device):
     model.eval()
     total_loss, total_mae = 0, 0
     total_density_loss, total_bbox_loss = 0, 0
+    
+    # Peak finding needs nn.functional
+    import torch.nn.functional as F
+
     with torch.no_grad():
         for img, gt_heatmap, gt_bbox, gt_offset, gt_reg_mask in loader:
             img = img.to(device)
@@ -155,13 +159,21 @@ def validate(model, loader, criterion, device):
             total_density_loss += loss_dict['density_loss'].item()
             total_bbox_loss += loss_dict['bbox_loss'].item()
             
-            # Calculate MAE for counting
-            pred_count = torch.sigmoid(predictions[0]).sum() # Use sigmoid on density map for counting
-            gt_count = gt_reg_mask.sum()
-            total_mae += abs(pred_count - gt_count).item()
+            # --- CORRECTED MAE CALCULATION ---
+            pred_heatmap = torch.sigmoid(predictions[0]) # Get heatmap probabilities
+
+            # Use max pooling to find local maxima, just like in the visualization script
+            h_max = F.max_pool2d(pred_heatmap, 3, stride=1, padding=1)
+            # A peak is where the original value is a local max and above a threshold
+            peaks = (h_max == pred_heatmap) & (pred_heatmap > 0.4) # Using a confidence threshold
+            
+            pred_count = peaks.sum().item() # The count is the number of peaks
+            gt_count = gt_reg_mask.sum().item() # The true count
+            total_mae += abs(pred_count - gt_count)
+            # --- END OF CORRECTION ---
 
     avg_loss = total_loss / len(loader)
-    avg_mae = total_mae / len(loader)
+    avg_mae = total_mae / len(loader) # This will now be a meaningful number
     avg_losses = {'density_loss': total_density_loss / len(loader), 'bbox_loss': total_bbox_loss / len(loader)}
 
     return avg_loss, avg_losses, avg_mae
