@@ -76,11 +76,23 @@ def main():
         if os.path.isfile(args.resume):
             print(f"=> Resuming training from checkpoint '{args.resume}'")
             checkpoint = torch.load(args.resume, map_location=device)
-            start_epoch = checkpoint['epoch']
-            best_val_loss = checkpoint['best_val_loss']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
+            
+            # --- THIS IS THE ROBUST FIX ---
+            # Check for keys before accessing them, provide defaults if they don't exist.
+            start_epoch = checkpoint.get('epoch', 0) # Default to epoch 0 if 'epoch' key is missing
+            best_val_loss = checkpoint.get('best_val_loss', float('inf')) # Default to infinity
+            
+            model.load_state_dict(checkpoint['state_dict']) # 'state_dict' must exist
+            
+            # Also check for the optimizer state
+            if 'optimizer' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                print("=> Optimizer state loaded successfully.")
+            else:
+                print("=> WARNING: Optimizer state not found in checkpoint. Starting with a fresh optimizer.")
+
             print(f"=> Resumed from epoch {start_epoch}. Best validation loss so far: {best_val_loss:.4f}")
+            # --- END OF FIX ---
         else:
             print(f"=> ERROR: No checkpoint found at '{args.resume}'")
             return
