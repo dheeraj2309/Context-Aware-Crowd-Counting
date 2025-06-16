@@ -1,170 +1,170 @@
 import sys
 import os
-import warnings
 import time
 import json
 import argparse
-import pandas as pd # Import pandas for logging
-
+import pandas as pd
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
-from torchvision import datasets, transforms
-import numpy as np
+from torchvision import transforms
 
-# Import your other project files
-from model import CANNet
-from utils import save_checkpoint
-import dataset 
+# Import all our new custom modules
+from vehicle_model import VehicleDetector
+from dataset import MultiHeadDataset
+from losses import MultiTaskLoss
+from utils import save_checkpoint # From original utils
 
-# --- Argument Parser (Unchanged) ---
-parser = argparse.ArgumentParser(description='PyTorch CANNet Fine-Tuning with Logging')
-# (Add all arguments from the previous script here)
-# ...
-parser.add_argument('train_json', metavar='TRAIN', help='path to train json')
-parser.add_argument('val_json', metavar='VAL', help='path to val json')
-parser.add_argument('--pretrained_model', type=str, default=None, help='path to pre-trained model for fine-tuning')
+# --- Argument Parser ---
+parser = argparse.ArgumentParser(description='Vehicle Detector Training')
+# Paths
+parser.add_argument('--train_json', required=True, help='path to train json')
+parser.add_argument('--val_json', required=True, help='path to val json')
+parser.add_argument('--annotations_csv', required=True, help='path to the master annotations csv')
+parser.add_argument('--pretrained_cannet', type=str, default=None, help='path to pre-trained CANNet model')
 parser.add_argument('--save_path', type=str, default='./checkpoints/', help='path to save checkpoints and log')
-parser.add_argument('--lr', type=float, default=1e-5, help='learning rate')
+# Hyperparameters
+parser.add_argument('--lr_backbone', type=float, default=1e-5, help='learning rate for pre-trained parts')
+parser.add_argument('--lr_heads', type=float, default=1e-4, help='learning rate for new heads')
 parser.add_argument('--batch_size', type=int, default=4, help='batch size')
-parser.add_argument('--epochs', type=int, default=200, help='number of epochs')
+parser.add_argument('--epochs', type=int, default=100, help='number of epochs')
 parser.add_argument('--workers', type=int, default=2, help='data loading workers')
 parser.add_argument('--decay', type=float, default=5e-4, help='weight decay')
-parser.add_argument('--print_freq', type=int, default=50, help='print frequency')
+# Freezing and Early Stopping
+parser.add_argument('--freeze_frontend', action='store_true', help='Freeze the VGG frontend')
+parser.add_argument('--freeze_context', action='store_true', help='Freeze the CANNet context module')
+parser.add_argument('--early_stop_patience', type=int, default=10, help='Patience for early stopping')
 
-
-# --- Main Function (with logging added) ---
+# --- Main Training Function ---
 def main():
-    global args, best_prec1
-    best_prec1 = 1e6
-
     args = parser.parse_args()
-
-    # --- Setup Logging ---
     os.makedirs(args.save_path, exist_ok=True)
+    
+    # --- Setup Logging ---
     log_file_path = os.path.join(args.save_path, 'training_log.csv')
-    # If the log file doesn't exist, create it with a header
-    if not os.path.exists(log_file_path):
-        with open(log_file_path, 'w') as f:
-            f.write('epoch,lr,avg_train_loss,val_mae\n')
+    log_df = pd.DataFrame(columns=['epoch', 'train_loss', 'val_loss', 'val_density_loss', 'val_bbox_loss', 'val_mae'])
+    log_df.to_csv(log_file_path, index=False)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    with open(args.train_json, 'r') as f: train_list = json.load(f)
-    with open(args.val_json, 'r') as f: val_list = json.load(f)
+    # --- Model ---
+    model = VehicleDetector().to(device)
+    if args.pretrained_cannet:
+        model.load_pretrained_cannet(args.pretrained_cannet, device)
 
-    model = CANNet().to(device)
-    criterion = nn.MSELoss(size_average=False).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), args.lr, weight_decay=args.decay)
+    # --- Layer Freezing Logic ---
+    if args.freeze_frontend:
+        print("Freezing frontend layers...")
+        for param in model.cannet.frontend.parameters():
+            param.requires_grad = False
+    if args.freeze_context:
+        print("Freezing context module layers...")
+        for param in model.cannet.context.parameters():
+            param.requires_grad = False
 
-    if args.pretrained_model and os.path.isfile(args.pretrained_model):
-        print(f"=> loading checkpoint '{args.pretrained_model}'")
-        checkpoint = torch.load(args.pretrained_model, map_location=device)
-        model.load_state_dict(checkpoint['state_dict'])
-        print(f"=> loaded checkpoint successfully")
-    else:
-        print("=> No pre-trained model specified or found. Training from scratch.")
+    # --- Optimizer with Differential Learning Rates ---
+    optimizer = torch.optim.Adam([
+        {'params': model.cannet.frontend.parameters(), 'lr': args.lr_backbone},
+        {'params': model.cannet.context.parameters(), 'lr': args.lr_backbone},
+        # The original CANNet backend and output layer are also fine-tuned
+        {'params': model.cannet.backend.parameters(), 'lr': args.lr_backbone},
+        {'params': model.cannet.output_layer.parameters(), 'lr': args.lr_backbone},
+        # The new heads get a larger learning rate
+        {'params': model.new_heads_base.parameters(), 'lr': args.lr_heads},
+        {'params': model.bbox_head.parameters(), 'lr': args.lr_heads},
+        {'params': model.offset_head.parameters(), 'lr': args.lr_heads},
+    ], weight_decay=args.decay)
 
-    # --- Training Loop (with logging added) ---
-    for epoch in range(args.epochs):
-        # The train function now returns the average loss
-        avg_train_loss = train(train_list, model, criterion, optimizer, epoch, device)
-        
-        # The validate function returns the validation MAE
-        val_mae = validate(val_list, model, criterion, device)
-
-        is_best = val_mae < best_prec1
-        best_prec1 = min(val_mae, best_prec1)
-        print(f' * Best MAE so far {best_prec1:.3f}')
-        
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
-        }, is_best, filename=os.path.join(args.save_path, 'checkpoint.pth.tar'))
-        
-        # --- Log the statistics for this epoch ---
-        current_lr = optimizer.param_groups[0]['lr']
-        log_stats = f'{epoch},{current_lr},{avg_train_loss},{val_mae}\n'
-        with open(log_file_path, 'a') as f:
-            f.write(log_stats)
-
-# --- AverageMeter Class (Unchanged) ---
-class AverageMeter(object):
-    # ... (code from previous response)
-    def __init__(self): self.reset()
-    def reset(self): self.val, self.avg, self.sum, self.count = 0, 0, 0, 0
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-# --- `train` function (modified to return avg_loss) ---
-def train(train_list, model, criterion, optimizer, epoch, device):
-    losses = AverageMeter()
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-
-    train_loader = torch.utils.data.DataLoader(
-        dataset.listDataset(train_list, shuffle=True,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-                       ]), 
-                       train=True, batch_size=args.batch_size, num_workers=args.workers),
-        batch_size=args.batch_size)
+    # --- DataLoaders ---
+    train_dataset = MultiHeadDataset(args.train_json, args.annotations_csv, train=True)
+    val_dataset = MultiHeadDataset(args.val_json, args.annotations_csv, train=False)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=args.workers)
     
-    print(f'Epoch: {epoch}, lr: {optimizer.param_groups[0]["lr"]:.5f}')
-    model.train()
-    end = time.time()
+    # --- Loss Function ---
+    criterion = MultiTaskLoss().to(device)
 
-    for i, (img, target) in enumerate(train_loader):
-        data_time.update(time.time() - end)
+    # --- Training Loop with Early Stopping ---
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+    
+    for epoch in range(args.epochs):
+        print(f"\n--- Epoch {epoch}/{args.epochs-1} ---")
+        
+        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
+        val_loss, val_losses, val_mae = validate(model, val_loader, criterion, device)
+        
+        print(f"Epoch {epoch} Summary: Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val MAE: {val_mae:.3f}")
+
+        # Logging
+        new_log = pd.DataFrame({
+            'epoch': [epoch], 'train_loss': [train_loss], 'val_loss': [val_loss],
+            'val_density_loss': [val_losses['density_loss'].item()], 
+            'val_bbox_loss': [val_losses['bbox_loss'].item()], 'val_mae': [val_mae]
+        })
+        new_log.to_csv(log_file_path, mode='a', header=False, index=False)
+
+        # Check for improvement (for checkpointing and early stopping)
+        is_best = val_loss < best_val_loss
+        if is_best:
+            best_val_loss = val_loss
+            epochs_no_improve = 0
+            print("New best validation loss! Saving model...")
+            save_checkpoint({'state_dict': model.state_dict()}, True, filename=os.path.join(args.save_path, 'checkpoint.pth.tar'))
+        else:
+            epochs_no_improve += 1
+            print(f"No improvement in validation loss for {epochs_no_improve} epoch(s).")
+
+        # Early stopping
+        if epochs_no_improve >= args.early_stop_patience:
+            print(f"Early stopping triggered after {args.early_stop_patience} epochs with no improvement.")
+            break
+
+def train_one_epoch(model, loader, optimizer, criterion, device):
+    model.train()
+    total_loss = 0
+    for i, (img, gt_heatmap, gt_bbox, gt_offset, gt_reg_mask) in enumerate(loader):
         img = img.to(device)
-        target = target.type(torch.FloatTensor).to(device)
-        output = model(img)
-        loss = criterion(output.squeeze(), target)
-        losses.update(loss.item(), img.size(0))
+        targets = (gt_heatmap.to(device), gt_bbox.to(device), gt_offset.to(device), gt_reg_mask.to(device))
+        
         optimizer.zero_grad()
+        predictions = model(img)
+        loss, _ = criterion(predictions, targets)
+        
         loss.backward()
         optimizer.step()
-        batch_time.update(time.time() - end)
-        end = time.time()
+        total_loss += loss.item()
         
-        if i % args.print_freq == 0:
-            print(f'  [{i}/{len(train_loader)}]\t'
-                  f'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  f'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  f'Loss {losses.val:.4f} ({losses.avg:.4f})')
+        if i % 50 == 0:
+            print(f"  Batch {i}/{len(loader)}, Loss: {loss.item():.4f}")
             
-    # Return the average loss for the entire epoch
-    return losses.avg
+    return total_loss / len(loader)
 
-# --- `validate` function (Unchanged, already returns MAE) ---
-def validate(val_list, model, criterion, device):
-    # ... (code from previous response)
-    print('begin val')
-    val_loader = torch.utils.data.DataLoader(
-        dataset.listDataset(val_list, shuffle=False,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-                       ]), train=False),
-        batch_size=1)
+def validate(model, loader, criterion, device):
     model.eval()
-    mae = 0
+    total_loss, total_mae = 0, 0
+    total_density_loss, total_bbox_loss = 0, 0
     with torch.no_grad():
-        for i,(img, target) in enumerate(val_loader):
+        for img, gt_heatmap, gt_bbox, gt_offset, gt_reg_mask in loader:
             img = img.to(device)
-            output = model(img)
-            pred_count = output.sum().item()
-            gt_count = target.sum().item()
-            mae += abs(pred_count - gt_count)
-    mae = mae / len(val_loader)    
-    print(f' * MAE {mae:.3f}')
-    return mae
+            targets = (gt_heatmap.to(device), gt_bbox.to(device), gt_offset.to(device), gt_reg_mask.to(device))
+            
+            predictions = model(img)
+            loss, loss_dict = criterion(predictions, targets)
+            total_loss += loss.item()
+            total_density_loss += loss_dict['density_loss'].item()
+            total_bbox_loss += loss_dict['bbox_loss'].item()
+            
+            # Calculate MAE for counting
+            pred_count = torch.sigmoid(predictions[0]).sum() # Use sigmoid on density map for counting
+            gt_count = gt_reg_mask.sum()
+            total_mae += abs(pred_count - gt_count).item()
+
+    avg_loss = total_loss / len(loader)
+    avg_mae = total_mae / len(loader)
+    avg_losses = {'density_loss': total_density_loss / len(loader), 'bbox_loss': total_bbox_loss / len(loader)}
+
+    return avg_loss, avg_losses, avg_mae
 
 if __name__ == '__main__':
     main()
