@@ -1,112 +1,176 @@
-# Context-Aware Crowd Counting
-
-This repository is a PyTorch implementation for the paper **Context-Aware Crowd Counting**. Weizhe Liu, Mathieu Salzmann, Pascal Fua. CVPR. 2019. If you use this code in your research, please cite
-[the paper](http://openaccess.thecvf.com/content_CVPR_2019/papers/Liu_Context-Aware_Crowd_Counting_CVPR_2019_paper.pdf).
-
-State-of-the-art methods for counting people in crowded scenes rely on deep networks to estimate crowd density. They typically use the same filters over the whole image or over large image patches. Only then do they estimate local scale to compensate for perspective distortion. This is typically achieved by training an auxiliary classifier to select, for predefined image patches, the best kernel size among a limited set of choices. As such, these methods are not endto-end trainable and restricted in the scope of context they can leverage.
-
-In this paper, we introduce an end-to-end trainable deep architecture that combines features obtained using multiple receptive field sizes and learns the importance of each such feature at each image location. In other words, our approach adaptively encodes the scale of the contextual information required to accurately predict crowd density. This yields an algorithm that outperforms state-of-the-art crowd counting methods, especially when perspective effects are strong.
-
-![](./images/model.png)
-Figure 1: Context-Aware Network. (Top) RGB images are fed to a font-end network that comprises the first 10 layers of the VGG-16
-network. The resulting local features are grouped in blocks of different sizes by average pooling followed by a 1×1 convolutional layer.
-They are then up-sampled back to the original feature size to form the contrast features. Contrast features are further used to learn the
-weights for the scale-aware features that are then fed to a back-end network to produce the final density map. (Bottom) As shown in this
-expanded version of the first part of the network, the contrast features are the difference between local features and context features.
-
-![](./images/prediction.png)
-
-Figure 2: Crowd density estimation on ShanghaiTech. First
-row: Image from Part A. Second row: Image from Part B. Our
-model adjusts to rapid scale changes and delivers density maps
-that are close to the ground truth.
-
-## Installation
-PyTorch 0.4.1
-
-Python 2.7
-
-## Dataset
-
-&emsp;1. Download ShanghaiTech Part B Dataset from
-Dropbox: [link](https://www.dropbox.com/s/fipgjqxl7uj8hd5/ShanghaiTech.zip?dl=0) or Baidu Disk: [link](http://pan.baidu.com/s/1nuAYslz).  
-
-&emsp;2. Create the hdf5 files with make_dataset.py, you need to set the path according to dataset location.
-
-&emsp;3. Use create_json.py to generate the json file which contains the path to the images.
-
-## Training
-In command line:
-
-```
-python train.py train.json val.json
-
-``` 
-
-The json files here are generated from previous step (Dataset. 3.)
-
-## Tesing
-&emsp;1. Modify the "test.py", make sure the path is correct.
-
-&emsp;2. In command line:
-
-```
-python test.py
-
-``` 
-
-## Venice Dataset
-The dataset is in [GoogleDrive](https://drive.google.com/file/d/15PUf7C3majy-BbWJSSHaXUlot0SUh3mJ/view).
-
-## Notes
-
-&emsp;1. This is the implementation for ShanghaiTech part B, the pretrained model is in [GoogleDrive](https://drive.google.com/file/d/1meuY_nfcABvsPFG1rXZEpAxcjnk0L9M1/view?usp=sharing) with MAE=7.5
-
-
-&emsp;2. For ShanghaiTech Part A, refer to [this](https://github.com/CommissarMa/Context-Aware_Crowd_Counting-pytorch), thanks [CommissarMa](https://github.com/CommissarMa) for this implementation.
-
- &emsp;3. For some dataset which training images have different size, we set batch size to 1, like ShanghaiTech part A. For others, you could set your batch size according to you GPU memory, but the batch size may affect your model accuracy during training.
-
- &emsp;4. For the selection of train/val dataset, we follow the same setting as previous work, you could find it [here](https://github.com/leeyeehoo/CSRNet-pytorch)
- 
-## Citing
-
-``` 
-
-@InProceedings{Liu_2019_CVPR,
-
-author = {Liu, Weizhe and Salzmann, Mathieu and Fua, Pascal},
-
-title = {Context-Aware Crowd Counting},
-
-booktitle = {The IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
-
-month = {June},
-
-year = {2019}
-
-}
-
-``` 
-
-``` 
-@InProceedings{Liu_2019_IROS,
-
-author = {Liu, Weizhe and Lis, Krzysztof Maciej and Salzmann, Mathieu and Fua, Pascal},
-
-title = {Geometric and Physical Constraints for Drone-Based Head Plane Crowd Density Estimation},
-
-booktitle = {IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
-
-month = {November},
-
-year = {2019}
-
-}
-
-``` 
-
-## Contact
-
-For any questions regard this paper/code, please directly contact [Weizhe Liu](mailto:weizhe.liu@epfl.ch).
-
+Multi-Task Vehicle Detection and Counting
+This project implements a multi-task deep learning model for simultaneous vehicle detection (bounding boxes) and counting (density maps). It extends the popular Context-Aware Crowd Counting (CANNet) model by adding parallel heads for bounding box and center offset regression, creating a powerful tool for comprehensive traffic analysis.
+The model uses a shared VGG-16 backbone and then splits into two main branches:
+Density Branch: The original CANNet architecture is used to predict a density heatmap, which is excellent for counting objects in crowded scenes.
+Detection Branch: New convolutional layers are added to regress bounding box dimensions (width, height, center_x, center_y) and sub-pixel center offsets for each detected vehicle.
+This multi-task approach allows the model to leverage shared features for both tasks, leading to robust and accurate predictions.
+Features
+Multi-Task Learning: Simultaneously predicts density maps for counting and bounding boxes for localization.
+CANNet Backbone: Leverages the powerful context-aware modules of CANNet for robust feature extraction.
+Advanced Loss Functions: Utilizes a combination of Focal Loss for the density heatmap (to handle class imbalance between object centers and background) and DIoU Loss for stable and accurate bounding box regression.
+Transfer Learning: Supports loading weights from a pre-trained CANNet model to kick-start training of the density branch.
+Flexible Training: The training script includes:
+Differential learning rates for the backbone and new heads.
+Resuming from checkpoints.
+Options to freeze backbone layers.
+Early stopping to prevent overfitting.
+Detailed logging of training and validation metrics.
+Data Augmentation: Includes random cropping and horizontal flipping during training to improve model generalization.
+Project Structure
+Generated code
+.
+├── vehicle_model.py    # Defines the main VehicleDetector multi-task model.
+├── model.py            # Defines the original CANNet architecture (used as a building block).
+├── train.py            # Main script to train the multi-task model.
+├── test.py             # Script to evaluate a trained model (originally for CANNet).
+├── losses.py           # Defines MultiTaskLoss, FocalLoss, and DIoU Loss.
+├── image.py            # Data loading, augmentation, and ground truth generation.
+├── generate_heatmaps.py# Pre-processes point annotations into density map ground truth.
+├── utils.py            # Utility functions, including checkpoint saving.
+├── requirements.txt    # Python package dependencies.
+└── README.md           # This file.
+Use code with caution.
+Setup and Installation
+Clone the Repository
+Generated bash
+git clone <your-repository-url>
+cd <repository-name>
+Use code with caution.
+Bash
+Create a Virtual Environment (Recommended)
+Generated bash
+python -m venv venv
+source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+Use code with caution.
+Bash
+Install Dependencies
+The project requires several Python libraries. Install them using pip:
+Generated bash
+pip install -r requirements.txt
+Use code with caution.
+Bash
+If a requirements.txt file is not available, you can create one with the following content:
+Generated txt
+torch
+torchvision
+numpy
+pandas
+h5py
+scipy
+Pillow
+matplotlib
+tqdm
+scikit-learn
+opencv-python
+Use code with caution.
+Txt
+Dataset Preparation
+The model requires a specific data structure and annotations.
+1. Directory Structure
+Organize your dataset as follows. The script generate_heatmaps.py is configured to work with this structure.
+Generated code
+<your_data_root>/
+├── train/
+│   ├── images/
+│   │   ├── image_0001.jpg
+│   │   └── ...
+│   └── ground_truth/
+│       ├── GT_image_0001.mat
+│       └── ...
+└── valid/
+    ├── images/
+    │   ├── image_0100.jpg
+    │   └── ...
+    └── ground_truth/
+        ├── GT_image_0100.mat
+        └── ...
+Use code with caution.
+2. Annotation Format
+The model uses two types of annotations:
+.mat files: For point-level annotations used to generate the initial density maps. Each .mat file should correspond to an image and contain a structure like image_info[0,0]['location'][0,0] which holds an Nx2 array of (x, y) coordinates.
+.csv file: A master annotation file containing bounding box information for all images. This is used by the training script to generate ground truth for the detection head. The CSV must have at least these columns: image_path, xmin, ymin, xmax, ymax.
+3. Generate Ground Truth Density Maps
+The script generate_heatmaps.py converts the point annotations in the .mat files into Gaussian density maps and saves them as .h5 files in the ground_truth directory.
+First, visualize to find the best GAUSSIAN_SIGMA:
+Open generate_heatmaps.py.
+Set ENABLE_VISUALIZATION = True.
+Adjust GAUSSIAN_SIGMA until the generated heatmaps visually correspond well to the object sizes in the sample images.
+Generated bash
+python generate_heatmaps.py
+Use code with caution.
+Bash
+After visualization, you will be prompted to proceed with generating all maps.
+Then, generate all .h5 files:
+Set ENABLE_VISUALIZATION = False and run the script again, or type yes at the prompt.
+4. Prepare JSON Splits
+Create train.json and val.json files. These files should contain a list of absolute or relative paths to the image files for the training and validation sets, respectively.
+Example train.json:
+Generated json
+[
+  "/path/to/your_data_root/train/images/image_0001.jpg",
+  "/path/to/your_data_root/train/images/image_0002.jpg"
+]
+Use code with caution.
+Json
+Usage
+Training the Model
+The train.py script is the main entry point for training. It uses argparse for configuration.
+Basic Training from Scratch:
+Generated bash
+python train.py \
+    --train_json /path/to/train.json \
+    --val_json /path/to/val.json \
+    --annotations_csv /path/to/master_annotations.csv \
+    --save_path ./checkpoints/run1 \
+    --batch_size 4 \
+    --epochs 100
+Use code with caution.
+Bash
+Training with Pre-trained CANNet Weights (Transfer Learning):
+This is highly recommended. First, obtain a pre-trained CANNet model (.pth.tar file).
+Generated bash
+python train.py \
+    --train_json /path/to/train.json \
+    --val_json /path/to/val.json \
+    --annotations_csv /path/to/master_annotations.csv \
+    --save_path ./checkpoints/run_transfer \
+    --pretrained_cannet /path/to/pretrained_cannet.pth.tar \
+    --lr_backbone 1e-5 \
+    --lr_heads 1e-4
+Use code with caution.
+Bash
+This sets a lower learning rate for the CANNet backbone and a higher one for the newly initialized detection heads.
+Resuming an Interrupted Training Session:
+The script automatically saves latest_checkpoint.pth.tar in the --save_path directory.
+Generated bash
+python train.py \
+    --train_json /path/to/train.json \
+    --val_json /path/to/val.json \
+    --annotations_csv /path/to/master_annotations.csv \
+    --save_path ./checkpoints/run_transfer \
+    --resume ./checkpoints/run_transfer/latest_checkpoint.pth.tar
+Use code with caution.
+Bash
+Evaluation
+During training, the validate function calculates validation loss and Mean Absolute Error (MAE) for the count.
+The provided test.py script is designed for the original CANNet model (it sums the density map to get a count). To evaluate the full multi-task model, you would need to write a new script that performs the following steps on the model's output:
+Apply sigmoid to the density map output.
+Perform non-maximum suppression (or simple peak finding) on the density map to identify object centers.
+For each identified center, retrieve the corresponding bounding box and offset predictions.
+Combine the predictions to generate final bounding boxes.
+Compare these boxes against ground truth using metrics like AP (Average Precision).
+Model Architecture Explained
+The VehicleDetector model in vehicle_model.py works as follows:
+Shared Backbone: An input image is passed through the cannet.frontend (a VGG-16 feature extractor), producing a feature map of size (B, 512, H/8, W/8).
+Branch 1: Density Prediction (CANNet Path)
+The shared features are fed into the standard CANNet context and backend modules.
+This branch outputs a single-channel density_map of size (B, 1, H/8, W/8).
+Branch 2: Detection Head Base
+The same shared features are fed into a new, parallel convolutional block (new_heads_base).
+This produces a separate feature map (new_head_features) of size (B, 128, H/8, W/8).
+Feature Fusion and Final Prediction
+A key architectural choice is to concatenate the output of the new detection branch with the output of the density branch: torch.cat([new_head_features, density_map], dim=1).
+This 129-channel feature map is then passed through two final 1x1 convolutional layers:
+bbox_head: Predicts 4 channels for bounding box parameters.
+offset_head: Predicts 2 channels for sub-pixel center offsets.
+This design allows the final bounding box and offset predictions to be conditioned on the model's density estimation, potentially improving localization accuracy.
