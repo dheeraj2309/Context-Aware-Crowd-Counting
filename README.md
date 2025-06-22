@@ -17,7 +17,6 @@ Flexible Training: The training script includes:
 * Detailed logging of training and validation metrics.  
 * Data Augmentation: Includes random cropping and horizontal flipping during training to improve model generalization.  
 ### Project Structure
-.
 ├── vehicle_model.py    # Defines the main VehicleDetector multi-task model.  
 ├── model.py            # Defines the original CANNet architecture (used as a building block).  
 ├── train.py            # Main script to train the multi-task model.  
@@ -31,8 +30,8 @@ Flexible Training: The training script includes:
 ### Setup and Installation  
 * Clone the Repository  
 ```bash
-git clone <your-repository-url>
-cd <repository-name>
+git clone https://github.com/dheeraj2309/Context-Aware-Crowd-Counting
+cd Context-Aware-Crowd-Counting
 ```
 * Create a Virtual Environment (Recommended)
 ``` bash
@@ -155,7 +154,7 @@ The VehicleDetector model in `vehicle_model.py` works as follows:
 **Shared Backbone**: An input image is passed through the cannet.frontend (a VGG-16 feature extractor), producing a feature map of size (B, 512, H/8, W/8).  
 **Branch 1**: Density Prediction (CANNet Path)
 * The shared features are fed into the standard CANNet context and backend modules.
-* This branch outputs a single-channel density_map of size (B, 1, H/8, W/8).
+* This branch outputs a single-channel density_map of size (B, 1, H/8, W/8).  
 **Branch 2**: Detection Head Base  
 * The same shared features are fed into a new, parallel convolutional block (new_heads_base).
 * This produces a separate feature map (new_head_features) of size (B, 128, H/8, W/8).
